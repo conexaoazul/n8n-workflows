@@ -21,6 +21,53 @@ def _clean_phone(raw: str) -> str:
     return f"+{digits}" if digits else ""
 
 
+def _phone_digits(raw: str) -> str:
+    return "".join(ch for ch in (raw or "") if ch.isdigit())
+
+
+def _extract_contacts(search_data) -> list:
+    if isinstance(search_data, list):
+        return search_data
+    if not isinstance(search_data, dict):
+        return []
+    payload = search_data.get("payload", search_data)
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        contacts = payload.get("contacts", [])
+        return contacts if isinstance(contacts, list) else []
+    return []
+
+
+def _contact_id(contact: dict):
+    if not isinstance(contact, dict):
+        return None
+    return contact.get("id") or (contact.get("contact") or {}).get("id")
+
+
+def _contact_matches(contact: dict, email: str, phone: str) -> bool:
+    if not isinstance(contact, dict):
+        return False
+    contact_email = (contact.get("email") or "").strip().lower()
+    contact_phone = _phone_digits(contact.get("phone_number") or contact.get("phone") or "")
+    target_phone = _phone_digits(phone)
+    return bool((email and contact_email == email) or (target_phone and contact_phone == target_phone))
+
+
+def _search_contact(base: str, account_id: str, token: str, query: str, email: str, phone: str):
+    if not query:
+        return None
+    search_url = f"{base}/api/v1/accounts/{account_id}/contacts/search?q={urllib.request.quote(query)}"
+    search_resp = _cw_request(search_url, "GET", token)
+    if search_resp.get("status") != 200:
+        return None
+    items = _extract_contacts(search_resp.get("data"))
+    for item in items:
+        if _contact_matches(item, email, phone):
+            return _contact_id(item)
+    return _contact_id(items[0]) if items and isinstance(items[0], dict) else None
+
+
 def _flow_label(flow: str) -> str:
     labels = {
         "catalog_access": "📥 Catálogo Gratuito",
@@ -34,7 +81,12 @@ def _flow_label(flow: str) -> str:
 def _cw_request(url: str, method: str, token: str, body: dict = None) -> dict:
     """Helper para requests ao Chatwoot. Retorna {status, data} ou {error}."""
     data = json.dumps(body).encode("utf-8") if body else None
-    headers = {"Content-Type": "application/json", "api_access_token": token}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "ConexaoAzulLeadGate/1.0",
+        "api_access_token": token,
+    }
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -95,64 +147,63 @@ def sync_lead_to_chatwoot(payload: dict) -> dict:
         }
     }
 
+    # Reaproveitar contato existente primeiro evita 422 por telefone duplicado e reduz POSTs na API.
+    contact_mode = None
+    phone_digits = _phone_digits(whatsapp)
+    for mode, query in (
+        ("existing_phone", phone_digits),
+        ("existing_phone_e164", whatsapp),
+        ("existing_email", email),
+    ):
+        contact_id = _search_contact(base, account_id, token, query, email, whatsapp)
+        if contact_id:
+            contact_mode = mode
+            break
+
     contact_url = f"{base}/api/v1/accounts/{account_id}/contacts"
-    contact_resp = _cw_request(contact_url, "POST", token, contact_body)
-    contact_data = contact_resp.get("data") or contact_resp
+    contact_resp = {"status": 0}
+    if not contact_id:
+        contact_resp = _cw_request(contact_url, "POST", token, contact_body)
+        contact_data = contact_resp.get("data") or contact_resp
+        contact_mode = "created"
 
-    # Extrair contact_id (pode vir em payload.contact.id ou direto)
-    contact_id = None
-    if isinstance(contact_data, dict):
-        contact_id = (contact_data.get("payload", {}) or {}).get("contact", {}).get("id")
-        if not contact_id:
-            contact_id = contact_data.get("id")
+        # Extrair contact_id (pode vir em payload.contact.id ou direto)
+        if isinstance(contact_data, dict):
+            contact_id = (contact_data.get("payload", {}) or {}).get("contact", {}).get("id")
+            if not contact_id:
+                contact_id = contact_data.get("id")
 
-    # Se contato já existir (409 ou 422), tentar buscar pelo identifier
+    # Se contato já existir (409 ou 422), tentar buscar por telefone e email.
     if not contact_id and contact_resp.get("status") in (409, 422):
-        # Search by email first, then phone, then name
-        search_query = email or whatsapp or name
-        search_url = f"{base}/api/v1/accounts/{account_id}/contacts/search?q={urllib.request.quote(search_query)}"
-        search_resp = _cw_request(search_url, "GET", token)
-        if search_resp.get("status") == 200:
-            search_data = search_resp.get("data")
-            items = []
-            # Chatwoot API returns payload as list or dict depending on version
-            if isinstance(search_data, list):
-                items = search_data
-            elif isinstance(search_data, dict):
-                search_payload = search_data.get("payload", search_data)
-                if isinstance(search_payload, list):
-                    items = search_payload
-                elif isinstance(search_payload, dict):
-                    items = search_payload.get("contacts", [])
-            if items and isinstance(items[0], dict):
-                contact_id = items[0].get("id")
-
-        # If search by email found nothing, try by phone
-        if not contact_id and whatsapp:
-            phone_digits = "".join(ch for ch in whatsapp if ch.isdigit())
-            search_url2 = f"{base}/api/v1/accounts/{account_id}/contacts/search?q={urllib.request.quote(phone_digits)}"
-            search_resp2 = _cw_request(search_url2, "GET", token)
-            if search_resp2.get("status") == 200:
-                search_data2 = search_resp2.get("data")
-                items2 = []
-                if isinstance(search_data2, list):
-                    items2 = search_data2
-                elif isinstance(search_data2, dict):
-                    search_payload2 = search_data2.get("payload", search_data2)
-                    if isinstance(search_payload2, list):
-                        items2 = search_payload2
-                    elif isinstance(search_payload2, dict):
-                        items2 = search_payload2.get("contacts", [])
-                if items2 and isinstance(items2[0], dict):
-                    contact_id = items2[0].get("id")
+        search_attempts = [
+            ("existing_phone", phone_digits),
+            ("existing_phone_e164", whatsapp),
+            ("existing_email", email),
+            ("existing_name", name),
+        ]
+        for mode, query in search_attempts:
+            contact_id = _search_contact(base, account_id, token, query, email, whatsapp)
+            if contact_id:
+                contact_mode = mode
+                break
 
     # Se ainda não temos contact_id, retornar o que temos
     if not contact_id:
+        reason = f"contact_status_{contact_resp.get('status', 0)}"
+        if contact_resp.get("status") == 403:
+            reason = "chatwoot_unavailable"
         return {
-            "ok": contact_resp.get("status") in (200, 201),
+            "ok": False,
             "contact_id": None,
-            "reason": f"contact_status_{contact_resp.get('status', 0)}",
+            "reason": reason,
         }
+
+    # Atualiza atributos do contato existente, mas nunca quebra a captura por falha no Chatwoot.
+    if contact_mode != "created":
+        update_body = dict(contact_body)
+        update_body.pop("identifier", None)
+        update_url = f"{base}/api/v1/accounts/{account_id}/contacts/{contact_id}"
+        _cw_request(update_url, "PUT", token, update_body)
 
     # 2) Criar ou encontrar conversa no inbox BlueConnect
     conversation_id = None
@@ -220,4 +271,5 @@ def sync_lead_to_chatwoot(payload: dict) -> dict:
         "contact_id": contact_id,
         "conversation_id": conversation_id,
         "note_id": note_id,
+        "mode": contact_mode,
     }

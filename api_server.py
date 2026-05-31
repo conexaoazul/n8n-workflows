@@ -194,6 +194,14 @@ async def capture_automation_lead(lead: LeadGateRequest):
             store_payload["flow"] = payload.get("conversion_flow") or "catalog_access"
             store_payload["lgpd_consent"] = payload.get("consent")
             store_payload["whatsapp"] = payload.get("whatsapp")
+            store_payload["nome"] = payload.get("name")
+            store_payload["empresa"] = payload.get("company")
+            store_payload["segmento"] = payload.get("segment")
+            store_payload["interesse"] = payload.get("interest")
+            store_payload["desafio"] = payload.get("challenge")
+            store_payload["ferramenta_atual"] = payload.get("current_tool")
+            store_payload["urgencia"] = payload.get("urgency")
+            store_payload["orcamento"] = payload.get("budget")
             rec = lead_store.save_lead(store_payload)
             lead_id = rec.get("id", lead_id)
             saved = True
@@ -240,6 +248,7 @@ async def capture_automation_lead(lead: LeadGateRequest):
             "contact_id": chatwoot_result.get("contact_id"),
             "conversation_id": chatwoot_result.get("conversation_id"),
             "note_id": chatwoot_result.get("note_id"),
+            "mode": chatwoot_result.get("mode"),
         },
     }
 
