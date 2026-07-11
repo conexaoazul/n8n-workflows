@@ -1,0 +1,30 @@
+[submodule "vendors/workflows/awesome-n8n-templates"]
+	path = vendors/workflows/awesome-n8n-templates
+	url = https://github.com/conexaoazul/awesome-n8n-templates.git
+[submodule "vendors/workflows/n8n-free-templates"]
+	path = vendors/workflows/n8n-free-templates
+	url = https://github.com/conexaoazul/n8n-free-templates.git
+[submodule "vendors/workflows/n8n-as-code"]
+	path = vendors/workflows/n8n-as-code
+	url = https://github.com/conexaoazul/n8n-as-code.git
+[submodule "vendors/workflows/n8n-CyberSecurity-Workflows"]
+	path = vendors/workflows/n8n-CyberSecurity-Workflows
+	url = https://github.com/conexaoazul/n8n-CyberSecurity-Workflows.git
+[submodule "vendors/skills/caveman"]
+	path = vendors/skills/caveman
+	url = https://github.com/conexaoazul/caveman.git
+[submodule "vendors/skills/claude-skills"]
+	path = vendors/skills/claude-skills
+	url = https://github.com/conexaoazul/claude-skills.git
+[submodule "vendors/skills/skill-irpf-brasil"]
+	path = vendors/skills/skill-irpf-brasil
+	url = https://github.com/conexaoazul/skill-irpf-brasil.git
+[submodule "vendors/skills/openclaw-odoo-skill"]
+	path = vendors/skills/openclaw-odoo-skill
+	url = https://github.com/conexaoazul/openclaw-odoo-skill.git
+[submodule "vendors/skills/trailofbits-skills"]
+	path = vendors/skills/trailofbits-skills
+	url = https://github.com/conexaoazul/skills.git
+[submodule "vendors/skills/n8n-skills"]
+	path = vendors/skills/n8n-skills
+	url = https://github.com/conexaoazul/n8n-skills.git
