@@ -576,6 +576,189 @@
 </head>
 
 <body>
+  <!-- ===================== LEAD GATE — Conexão Azul Growth ===================== -->
+  <style>
+    .caz-hero{background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 55%,#0ea5e9 100%);color:#fff;padding:28px 16px;text-align:center}
+    .caz-hero h2{font-size:clamp(20px,3vw,30px);font-weight:800;margin:0 0 8px;line-height:1.2}
+    .caz-hero p{max-width:720px;margin:0 auto 18px;opacity:.95;font-size:15px;line-height:1.55}
+    .caz-ctas{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+    .caz-btn{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;font-size:14px;transition:transform .12s,box-shadow .12s}
+    .caz-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.18)}
+    .caz-btn-primary{background:#fff;color:#1e3a8a}
+    .caz-btn-amber{background:#f59e0b;color:#1f2937}
+    .caz-btn-ghost{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.5)}
+    .caz-ok{display:none;background:#ecfdf5;color:#065f46;border-bottom:1px solid #a7f3d0;padding:12px 16px;text-align:center;font-weight:600;font-size:14px}
+    .caz-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:9999;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(2px)}
+    .caz-modal{background:#fff;color:#0f172a;border-radius:16px;max-width:520px;width:100%;max-height:92vh;overflow:auto;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+    .caz-modal-head{padding:20px 22px 6px}
+    .caz-modal-head h3{margin:0;font-size:20px;font-weight:800;color:#1e3a8a}
+    .caz-modal-head p{margin:6px 0 0;font-size:13px;color:#64748b}
+    .caz-form{padding:14px 22px 22px;display:grid;gap:11px}
+    .caz-row{display:grid;gap:11px;grid-template-columns:1fr 1fr}
+    @media(max-width:480px){.caz-row{grid-template-columns:1fr}}
+    .caz-field label{display:block;font-size:12px;font-weight:600;color:#334155;margin:0 0 4px}
+    .caz-field input,.caz-field select,.caz-field textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px 11px;font-size:14px;font-family:inherit;background:#fff;color:#0f172a}
+    .caz-field input:focus,.caz-field select:focus,.caz-field textarea:focus{outline:2px solid #3b82f6;border-color:#3b82f6}
+    .caz-req{color:#ef4444}
+    .cax-consent{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#475569;line-height:1.45}
+    .cax-consent input{margin-top:2px}
+    .caz-submit{background:#2563eb;color:#fff;border:0;border-radius:10px;padding:13px;font-weight:800;font-size:15px;cursor:pointer}
+    .caz-submit:hover{background:#1d4ed8}
+    .caz-submit:disabled{opacity:.6;cursor:not-allowed}
+    .caz-close{position:absolute;top:14px;right:16px;background:0;border:0;font-size:24px;color:#94a3b8;cursor:pointer;line-height:1}
+    .caz-msg{font-size:13px;padding:9px 11px;border-radius:8px;display:none}
+    .caz-msg.err{display:block;background:#fef2f2;color:#b91c1c}
+    .caz-trust{font-size:11px;color:#94a3b8;text-align:center;margin-top:2px}
+  </style>
+
+  <section class="caz-hero" id="cazHero">
+    <h2>Automações prontas para vender, atender e operar melhor</h2>
+    <p>Explore workflows n8n selecionados para WhatsApp, CRM, Odoo, IA, vendas, atendimento e operações. Informe seu email e WhatsApp para liberar o acesso e receber recomendações sob medida.</p>
+    <div class="caz-ctas">
+      <button class="caz-btn caz-btn-primary" onclick="cazOpen('catalog_access')">Acessar catálogo gratuito</button>
+      <button class="caz-btn caz-btn-amber" onclick="cazOpen('trial_3_days')">Testar automação por 3 dias</button>
+      <button class="caz-btn caz-btn-ghost" onclick="cazOpen('white_label_enterprise')">Parceria / white-label</button>
+    </div>
+  </section>
+  <div class="caz-ok" id="cazOk">✅ Acesso liberado. Explore o catálogo e escolha a automação ideal para a sua operação.</div>
+
+  <div class="caz-overlay" id="cazOverlay" onclick="if(event.target===this)cazClose()">
+    <div class="caz-modal" style="position:relative">
+      <button class="caz-close" onclick="cazClose()" aria-label="Fechar">&times;</button>
+      <div class="caz-modal-head">
+        <h3 id="cazTitle">Liberar acesso ao catálogo</h3>
+        <p id="cazSubtitle">Leva 20 segundos. Acesso imediato após o cadastro.</p>
+      </div>
+      <form class="caz-form" id="cazForm" onsubmit="return cazSubmit(event)">
+        <div class="caz-msg" id="cazErr"></div>
+        <div class="caz-row">
+          <div class="caz-field"><label>Nome</label><input name="name" type="text" autocomplete="name" placeholder="Seu nome"></div>
+          <div class="caz-field"><label>Empresa</label><input name="company" type="text" autocomplete="organization" placeholder="Sua empresa"></div>
+        </div>
+        <div class="caz-row">
+          <div class="caz-field"><label>Email <span class="caz-req">*</span></label><input name="email" type="email" required autocomplete="email" placeholder="voce@empresa.com"></div>
+          <div class="caz-field"><label>WhatsApp <span class="caz-req">*</span></label><input name="whatsapp" type="tel" required autocomplete="tel" placeholder="+55 74 99999-9999"></div>
+        </div>
+        <div class="caz-row">
+          <div class="caz-field"><label>Segmento</label>
+            <select name="segment">
+              <option value="">Selecione…</option>
+              <option>Provedor de internet (ISP)</option>
+              <option>Clínica / Saúde</option>
+              <option>Jurídico</option>
+              <option>Educação</option>
+              <option>Varejo / E-commerce</option>
+              <option>Serviços B2B</option>
+              <option>Agência / Consultoria</option>
+              <option>Usuário Odoo</option>
+              <option>Outro</option>
+            </select>
+          </div>
+          <div class="caz-field"><label>Interesse</label>
+            <select name="interest">
+              <option value="catalog">Explorar catálogo</option>
+              <option value="trial">Testar automação</option>
+              <option value="implementation">Implantar com ajuda</option>
+              <option value="white_label">White-label / parceria</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+          </div>
+        </div>
+        <div class="caz-field caz-extra-trial" style="display:none"><label>Qual seu principal desafio hoje?</label><textarea name="challenge" rows="2" placeholder="Ex.: automatizar atendimento no WhatsApp"></textarea></div>
+        <div class="caz-row caz-extra-partner" style="display:none">
+          <div class="caz-field"><label>País</label>
+            <select name="country"><option value="BR" selected>Brasil</option><option value="US">United States</option><option value="PT">Portugal</option><option value="ES">España</option><option value="OTHER">Outro</option></select>
+          </div>
+          <div class="caz-field"><label>Modelo</label>
+            <select name="model"><option value="">Selecione…</option><option value="saas">SaaS</option><option value="self_hosted">Self-hosted</option><option value="white_label">White-label</option><option value="enterprise">Enterprise</option></select>
+          </div>
+        </div>
+        <label class="cax-consent"><input type="checkbox" name="consent" required><span>Autorizo a Conexão Azul a entrar em contato por email e WhatsApp e concordo com o tratamento dos meus dados conforme a LGPD.</span></label>
+        <button class="caz-submit" id="cazSubmitBtn" type="submit">Liberar acesso agora</button>
+        <div class="caz-trust">🔒 Seus dados ficam protegidos. Sem spam.</div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    var CAZ_FLOW_META = {
+      catalog_access:{title:"Liberar acesso ao catálogo",sub:"Leva 20 segundos. Acesso imediato após o cadastro.",interest:"catalog"},
+      trial_3_days:{title:"Teste guiado de 3 dias",sub:"Teste uma automação real com orientação da Conexão Azul.",interest:"trial"},
+      implementation_7_days:{title:"Sprint de implantação de 7 dias",sub:"Implantamos uma automação funcional em até 7 dias.",interest:"implementation"},
+      white_label_enterprise:{title:"Parceria, white-label e enterprise",sub:"Venda ou opere automações com sua marca e governança.",interest:"white_label"}
+    };
+    var cazCurrentFlow = "catalog_access";
+
+    function cazGetUtm(){
+      var p = new URLSearchParams(window.location.search);
+      return {
+        source_url: window.location.href,
+        utm_source: p.get('utm_source')||'',
+        utm_medium: p.get('utm_medium')||'',
+        utm_campaign: p.get('utm_campaign')||'',
+        utm_content: p.get('utm_content')||'',
+        utm_term: p.get('utm_term')||''
+      };
+    }
+    function cazOpen(flow){
+      cazCurrentFlow = flow || (new URLSearchParams(location.search)).get('conversion_flow') || 'catalog_access';
+      var meta = CAZ_FLOW_META[cazCurrentFlow] || CAZ_FLOW_META.catalog_access;
+      document.getElementById('cazTitle').textContent = meta.title;
+      document.getElementById('cazSubtitle').textContent = meta.sub;
+      var f = document.getElementById('cazForm');
+      if(f.interest) f.interest.value = meta.interest;
+      document.querySelector('.caz-extra-trial').style.display = (cazCurrentFlow==='trial_3_days'||cazCurrentFlow==='implementation_7_days')?'block':'none';
+      document.querySelector('.caz-extra-partner').style.display = (cazCurrentFlow==='white_label_enterprise')?'grid':'none';
+      document.getElementById('cazOverlay').style.display='flex';
+    }
+    function cazClose(){ document.getElementById('cazOverlay').style.display='none'; }
+    function cazShowOk(){
+      document.getElementById('cazHero').style.display='none';
+      document.getElementById('cazOk').style.display='block';
+    }
+    async function cazSubmit(ev){
+      ev.preventDefault();
+      var btn = document.getElementById('cazSubmitBtn');
+      var err = document.getElementById('cazErr'); err.className='caz-msg';
+      var f = ev.target;
+      var payload = Object.assign({
+        name: f.name.value||null,
+        email: f.email.value,
+        whatsapp: f.whatsapp.value,
+        company: f.company.value||null,
+        segment: f.segment.value||null,
+        interest: f.interest? f.interest.value : 'catalog',
+        challenge: f.challenge? f.challenge.value||null : null,
+        country: f.country? f.country.value : 'BR',
+        model: f.model? f.model.value||null : null,
+        conversion_flow: cazCurrentFlow,
+        language: 'pt-BR',
+        currency_preference: 'BRL',
+        consent: f.consent.checked
+      }, cazGetUtm());
+      btn.disabled=true; btn.textContent='Liberando…';
+      try{
+        var r = await fetch('/api/leads/automation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(!r.ok){ throw new Error('Não foi possível liberar o acesso agora.'); }
+        await r.json();
+        try{ localStorage.setItem('n8n_workflows_lead_gate_ok','true'); }catch(e){}
+        cazClose(); cazShowOk();
+        window.scrollTo({top:0,behavior:'smooth'});
+      }catch(e){
+        err.className='caz-msg err'; err.textContent = e.message || 'Erro ao enviar. Tente novamente.';
+        btn.disabled=false; btn.textContent='Liberar acesso agora';
+      }
+      return false;
+    }
+    // Pré-abrir flow se vier por URL e ainda não cadastrou
+    document.addEventListener('DOMContentLoaded',function(){
+      try{ if(localStorage.getItem('n8n_workflows_lead_gate_ok')==='true'){ cazShowOk(); return; } }catch(e){}
+      var qf = (new URLSearchParams(location.search)).get('conversion_flow');
+      if(qf && CAZ_FLOW_META[qf]){ setTimeout(function(){cazOpen(qf);},600); }
+    });
+  </script>
+  <!-- =================== FIM LEAD GATE =================== -->
+
   <div id="app">
     <!-- Header -->
     <header class="header">
