@@ -10,6 +10,7 @@ import os
 import glob
 import datetime
 import hashlib
+import re
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
@@ -73,6 +74,58 @@ class WorkflowDatabase:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_active ON workflows(active)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_count ON workflows(node_count)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_filename ON workflows(filename)")
+
+        # Generic CA Marketplace assets. Kept independent from workflows so the
+        # existing catalog/search endpoints continue to use the same tables.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                category TEXT,
+                repo TEXT,
+                path TEXT,
+                summary TEXT,
+                description TEXT,
+                price_cents INTEGER,
+                currency TEXT DEFAULT 'BRL',
+                license TEXT,
+                model TEXT,
+                tags TEXT,
+                popularity INTEGER DEFAULT 0,
+                complements TEXT,
+                visible INTEGER DEFAULT 1,
+                updated_at TEXT
+            )
+        """)
+
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS assets_fts USING fts5(
+                slug,
+                name,
+                summary,
+                description,
+                category,
+                tags,
+                content='assets',
+                content_rowid='id'
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_product_map (
+                slug TEXT PRIMARY KEY,
+                product_id INTEGER NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(slug) REFERENCES assets(slug) ON DELETE CASCADE
+            )
+        """)
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(asset_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_category ON assets(category)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_visible ON assets(visible)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_product_map_product ON asset_product_map(product_id)")
         
         # Create triggers to keep FTS table in sync
         conn.execute("""
@@ -97,9 +150,185 @@ class WorkflowDatabase:
                 VALUES (new.id, new.filename, new.name, new.description, new.integrations, new.tags);
             END
         """)
+
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS assets_ai AFTER INSERT ON assets BEGIN
+                INSERT INTO assets_fts(rowid, slug, name, summary, description, category, tags)
+                VALUES (new.id, new.slug, new.name, new.summary, new.description, new.category, new.tags);
+            END
+        """)
+
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS assets_ad AFTER DELETE ON assets BEGIN
+                INSERT INTO assets_fts(assets_fts, rowid, slug, name, summary, description, category, tags)
+                VALUES ('delete', old.id, old.slug, old.name, old.summary, old.description, old.category, old.tags);
+            END
+        """)
+
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS assets_au AFTER UPDATE ON assets BEGIN
+                INSERT INTO assets_fts(assets_fts, rowid, slug, name, summary, description, category, tags)
+                VALUES ('delete', old.id, old.slug, old.name, old.summary, old.description, old.category, old.tags);
+                INSERT INTO assets_fts(rowid, slug, name, summary, description, category, tags)
+                VALUES (new.id, new.slug, new.name, new.summary, new.description, new.category, new.tags);
+            END
+        """)
         
         conn.commit()
         conn.close()
+
+    def _asset_from_row(self, row: sqlite3.Row) -> Dict[str, Any]:
+        """Convert an asset row into API-friendly Python types."""
+        asset = dict(row)
+        for field in ("tags", "complements"):
+            value = asset.get(field)
+            if isinstance(value, str):
+                try:
+                    asset[field] = json.loads(value or "[]")
+                except json.JSONDecodeError:
+                    asset[field] = []
+            elif value is None:
+                asset[field] = []
+        asset["visible"] = bool(asset.get("visible", 1))
+        return asset
+
+    def _asset_fts_query(self, q: str) -> str:
+        """Build a conservative FTS5 query from user text."""
+        tokens = [token for token in re.split(r"\W+", q.strip(), flags=re.UNICODE) if token]
+        if not tokens:
+            return ""
+        return " ".join(f'"{token}"*' for token in tokens)
+
+    def upsert_asset(self, asset: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert or update a marketplace asset by slug."""
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        tags = asset.get("tags") or []
+        complements = asset.get("complements") or []
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            INSERT INTO assets (
+                slug, name, asset_type, category, repo, path, summary, description,
+                price_cents, currency, license, model, tags, popularity, complements,
+                visible, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+                name=excluded.name,
+                asset_type=excluded.asset_type,
+                category=excluded.category,
+                repo=excluded.repo,
+                path=excluded.path,
+                summary=excluded.summary,
+                description=excluded.description,
+                price_cents=excluded.price_cents,
+                currency=excluded.currency,
+                license=excluded.license,
+                model=excluded.model,
+                tags=excluded.tags,
+                popularity=excluded.popularity,
+                complements=excluded.complements,
+                visible=excluded.visible,
+                updated_at=excluded.updated_at
+        """, (
+            asset["slug"],
+            asset["name"],
+            asset["asset_type"],
+            asset.get("category"),
+            asset.get("repo"),
+            asset.get("path"),
+            asset.get("summary"),
+            asset.get("description"),
+            int(asset.get("price_cents") or 0),
+            asset.get("currency") or "BRL",
+            asset.get("license"),
+            asset.get("model"),
+            json.dumps(tags, ensure_ascii=False),
+            int(asset.get("popularity") or 0),
+            json.dumps(complements, ensure_ascii=False),
+            1 if asset.get("visible", 1) else 0,
+            asset.get("updated_at") or now,
+        ))
+        conn.commit()
+        row = conn.execute("SELECT * FROM assets WHERE slug = ?", (asset["slug"],)).fetchone()
+        conn.close()
+        return self._asset_from_row(row)
+
+    def search_assets(
+        self,
+        type: Optional[str] = None,
+        category: Optional[str] = None,
+        q: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search marketplace assets by type/category and optional FTS query."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        where_conditions = ["a.visible = 1"]
+        params: List[Any] = []
+
+        if type:
+            where_conditions.append("a.asset_type = ?")
+            params.append(type)
+        if category:
+            where_conditions.append("a.category = ?")
+            params.append(category)
+
+        fts_query = self._asset_fts_query(q)
+        if fts_query:
+            base_query = """
+                SELECT a.*, rank
+                FROM assets_fts fts
+                JOIN assets a ON a.id = fts.rowid
+                WHERE assets_fts MATCH ?
+            """
+            params.insert(0, fts_query)
+        else:
+            base_query = """
+                SELECT a.*, 0 as rank
+                FROM assets a
+                WHERE 1=1
+            """
+
+        if where_conditions:
+            base_query += " AND " + " AND ".join(where_conditions)
+
+        total = conn.execute(f"SELECT COUNT(*) as total FROM ({base_query}) t", params).fetchone()["total"]
+        order_by = "rank, a.popularity DESC, a.name ASC" if fts_query else "a.popularity DESC, a.name ASC"
+        rows = conn.execute(
+            f"{base_query} ORDER BY {order_by} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        results = [self._asset_from_row(row) for row in rows]
+        conn.close()
+        return results, total
+
+    def get_asset(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Fetch a visible marketplace asset by slug."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM assets WHERE slug = ? AND visible = 1", (slug,)).fetchone()
+        conn.close()
+        return self._asset_from_row(row) if row else None
+
+    def list_complements(self, slug: str) -> List[Dict[str, Any]]:
+        """Return cross-sell complements configured for an asset."""
+        asset = self.get_asset(slug)
+        if not asset:
+            return []
+        complement_slugs = asset.get("complements") or []
+        if not complement_slugs:
+            return []
+        placeholders = ",".join("?" for _ in complement_slugs)
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM assets WHERE slug IN ({placeholders}) AND visible = 1",
+            complement_slugs,
+        ).fetchall()
+        conn.close()
+        by_slug = {row["slug"]: self._asset_from_row(row) for row in rows}
+        return [by_slug[item] for item in complement_slugs if item in by_slug]
     
     def get_file_hash(self, file_path: str) -> str:
         """Get MD5 hash of file for change detection."""
