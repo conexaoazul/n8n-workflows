@@ -1,0 +1,327 @@
+{
+  "name": "CA Marketplace Fulfillment",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "ca-marketplace-fulfillment",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-paid-order",
+      "name": "Webhook Pedido Pago Asaas",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "skill",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "skill"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "module",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "module"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "workflow",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "workflow"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.asset_type }}",
+                    "rightValue": "agent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "agent"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-asset-type",
+      "name": "Switch asset_type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "command": "skill-installer install {{$json.slug}} && python3 /docker/openclaw/.openclaw/workspace/scripts/dhy_mail.py -s \"Seu skill {{$json.slug}}\" --md {{$json.onboarding_md || '/tmp/ca-marketplace-onboarding.md'}}"
+      },
+      "id": "fulfill-skill",
+      "name": "Skill installer + dhy-mail",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [560, -240]
+    },
+    {
+      "parameters": {
+        "command": "python3 /docker/openclaw/.openclaw/workspace/scripts/dhy_mail.py -s \"Módulo Odoo {{$json.slug}}\" --md {{$json.install_md || '/tmp/ca-marketplace-install.md'}}"
+      },
+      "id": "fulfill-module",
+      "name": "Zip módulo + install.sh + dhy-mail",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [560, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_API_URL + '/api/v1/workflows' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.workflow_json }}"
+      },
+      "id": "fulfill-workflow",
+      "name": "n8n API import",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [560, 80]
+    },
+    {
+      "parameters": {
+        "command": "paperclip create_agent --template {{$json.slug}} && python3 /docker/openclaw/.openclaw/workspace/scripts/dhy_mail.py -s \"Agent {{$json.slug}}\" --md {{$json.config_md || '/tmp/ca-marketplace-agent.md'}}"
+      },
+      "id": "fulfill-agent",
+      "name": "paperclip create_agent + dhy-mail",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [560, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CHATWOOT_BASE_URL + '/api/v1/accounts/' + $env.CHATWOOT_ACCOUNT_ID + '/contacts' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"name\": $json.customer.name, \"email\": $json.customer.email, \"phone_number\": $json.customer.phone}"
+      },
+      "id": "chatwoot-contact",
+      "name": "Chatwoot criar inbox/contato",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.POST_SALE_CADENCE_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}"
+      },
+      "id": "post-sale-cadence",
+      "name": "Ativar cadência pós-venda",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\": true, \"fulfillment\": \"started\", \"slug\": $json.slug}"
+      },
+      "id": "respond-ok",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1360, 0]
+    }
+  ],
+  "connections": {
+    "Webhook Pedido Pago Asaas": {
+      "main": [
+        [
+          {
+            "node": "Switch asset_type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch asset_type": {
+      "main": [
+        [
+          {
+            "node": "Skill installer + dhy-mail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zip módulo + install.sh + dhy-mail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "n8n API import",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "paperclip create_agent + dhy-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skill installer + dhy-mail": {
+      "main": [
+        [
+          {
+            "node": "Chatwoot criar inbox/contato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zip módulo + install.sh + dhy-mail": {
+      "main": [
+        [
+          {
+            "node": "Chatwoot criar inbox/contato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n API import": {
+      "main": [
+        [
+          {
+            "node": "Chatwoot criar inbox/contato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "paperclip create_agent + dhy-mail": {
+      "main": [
+        [
+          {
+            "node": "Chatwoot criar inbox/contato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chatwoot criar inbox/contato": {
+      "main": [
+        [
+          {
+            "node": "Ativar cadência pós-venda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ativar cadência pós-venda": {
+      "main": [
+        [
+          {
+            "node": "Responder OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "ca-marketplace-fase0",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "ca-marketplace-fulfillment"
+}
