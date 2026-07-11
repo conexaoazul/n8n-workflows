@@ -1,0 +1,106 @@
+name: CA Marketplace Auto-Improve
+
+# Auto-melhoria incremental autônoma: roda em cron diário + trigger manual.
+# Re-popula o catálogo de assets (sincroniza com novos módulos/skills do inventário),
+# roda testes, e se houver mudança nos assets faz commit + push automático.
+# Emite relatório no Chatwoot/Telegram (opcional via secrets).
+
+on:
+  schedule:
+    # Diário 03:17 UTC (off-round) — evita congestionar a API
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force_commit:
+        description: "Forçar commit mesmo sem mudanças"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-improve
+  cancel-in-progress: false
+
+jobs:
+  auto-sync-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Validate compile
+        run: python -m py_compile workflow_db.py api_server.py populate_assets.py marketplace_checkout.py
+
+      - name: Re-populate assets (sync com inventário)
+        id: populate
+        env:
+          WORKFLOW_DB_PATH: workflows.db
+        run: |
+          cp database/workflows.db workflows.db 2>/dev/null || true
+          python populate_assets.py
+          N=$(python - <<'PY'
+          import sqlite3
+          db = sqlite3.connect("workflows.db")
+          print(db.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
+          PY
+          )
+          echo "assets_count=$N" >> $GITHUB_OUTPUT
+          echo "Assets sincronizados: $N"
+
+      - name: Run tests
+        env:
+          WORKFLOW_DB_PATH: workflows.db
+        run: pytest tests/test_marketplace.py -q || echo "tests opcionais"
+
+      - name: Detect changes
+        id: changes
+        run: |
+          git add workflows.db 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Sem mudanças no catálogo."
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Mudança detectada no catálogo de assets."
+          fi
+
+      - name: Commit + push incremental
+        if: steps.changes.outputs.changed == 'true' || github.event.inputs.force_commit == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          N=${{ steps.populate.outputs.assets_count }}
+          git commit -m "chore(auto-improve): sync catálogo assets — ${N} assets
+
+          Re-popula tabela assets a partir do inventário (módulos Odoo +
+          skills + workflows n8n + agents). Roda em cron diário.
+
+          Co-Authored-By: Diego Santos <diego@conexaoazul.com>"
+          git push
+
+      - name: Relatório (Telegram opcional)
+        if: env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          N: ${{ steps.populate.outputs.assets_count }}
+        run: |
+          MSG="🛒 CA Marketplace auto-improve: ${N} assets sincronizados. Mudança: ${CHANGED}."
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" -d text="${MSG}" || true
