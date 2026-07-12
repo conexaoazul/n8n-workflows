@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import ast
+import argparse
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -71,6 +73,13 @@ WORKFLOW_PRIORITY_TERMS = (
     "http",
     "email",
 )
+
+PRICING_TIERS = {"simple": 900, "medium": 1900, "advanced": 2700}
+WORKFLOW_TIER_PRODUCTS = {
+    "simple": {"default_code": "WF-SIMPLE", "name": "Workflow Simple", "price_cents": 900},
+    "medium": {"default_code": "WF-MEDIUM", "name": "Workflow Medium", "price_cents": 1900},
+    "advanced": {"default_code": "WF-ADVANCED", "name": "Workflow Advanced", "price_cents": 2700},
+}
 
 DEFAULT_COMPLEMENTS = {
     "ca-nfse-validator": ["blue-payment-asaas-nfse", "suporte-nfse"],
@@ -290,20 +299,55 @@ def workflow_score(path: Path) -> int:
     return sum((len(WORKFLOW_PRIORITY_TERMS) - idx) * 10 for idx, term in enumerate(WORKFLOW_PRIORITY_TERMS) if term in text)
 
 
+def workflow_tier_from_metadata(data: Dict[str, Any], tags: Iterable[Any]) -> str:
+    candidates: List[str] = []
+    for key in ("tier", "pricing_tier", "pricingTier", "marketplace_tier", "marketplaceTier"):
+        value = data.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("tier", "pricing_tier", "pricingTier", "marketplace_tier", "marketplaceTier"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+    for tag in tags:
+        if isinstance(tag, str):
+            candidates.append(tag)
+        elif isinstance(tag, dict):
+            value = tag.get("name") or tag.get("value")
+            if isinstance(value, str):
+                candidates.append(value)
+    for candidate in candidates:
+        normalized = slugify(candidate)
+        for tier in PRICING_TIERS:
+            if normalized == tier or normalized.endswith(f"-{tier}") or normalized.startswith(f"{tier}-"):
+                return tier
+    return "medium"
+
+
 def describe_workflow(path: Path) -> Dict[str, Any]:
     name = path.stem
     description = ""
     tags: List[str] = ["n8n", "workflow"]
+    tier = "medium"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         name = data.get("name") or name
         nodes = data.get("nodes") or []
+        raw_tags = data.get("tags") or []
+        tier = workflow_tier_from_metadata(data, raw_tags)
         node_types = [node.get("type", "").split(".")[-1] for node in nodes if isinstance(node, dict)]
         tags.extend(sorted({item for item in node_types if item})[:8])
+        for tag in raw_tags:
+            if isinstance(tag, str):
+                tags.append(tag)
+            elif isinstance(tag, dict) and isinstance(tag.get("name"), str):
+                tags.append(tag["name"])
         description = f"Workflow n8n com {len(nodes)} nós: {', '.join(tags[2:6])}."
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         description = "Workflow n8n selecionado para automação comercial."
-    return {"name": name, "description": description, "tags": tags}
+    return {"name": name, "description": description, "tags": tags, "tier": tier}
 
 
 def build_workflow_assets(workflows_root: Optional[Path] = None, limit: int = 25) -> List[Dict[str, Any]]:
@@ -328,15 +372,96 @@ def build_workflow_assets(workflows_root: Optional[Path] = None, limit: int = 25
             "path": stored_path,
             "summary": meta["description"],
             "description": meta["description"],
-            "price_cents": 0,
+            "price_cents": PRICING_TIERS[meta["tier"]],
             "currency": "BRL",
-            "license": "free",
-            "model": "free",
+            "license": None,
+            "model": "one-shot",
             "tags": meta["tags"],
             "popularity": workflow_score(path),
             "complements": ["setup-express"] if workflow_score(path) else [],
         })
     return assets
+
+
+def workflow_tier_from_price(price_cents: int) -> str:
+    for tier, cents in PRICING_TIERS.items():
+        if int(price_cents) == cents:
+            return tier
+    raise ValueError(f"Unsupported workflow price tier: {price_cents}")
+
+
+def ensure_workflow_tier_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
+    conn = sqlite3.connect(db.db_path)
+    conn.row_factory = sqlite3.Row
+    assets = conn.execute(
+        """
+        SELECT slug, name, price_cents
+        FROM assets
+        WHERE asset_type = 'workflow'
+          AND visible = 1
+          AND COALESCE(price_cents, 0) > 0
+        ORDER BY slug
+        """
+    ).fetchall()
+
+    created = 0
+    checked_products = 0
+    tier_product_ids: Dict[str, int] = {}
+    for tier, spec in WORKFLOW_TIER_PRODUCTS.items():
+        checked_products += 1
+        product = tool_execute(
+            tool,
+            "product.template",
+            "search_read",
+            [[("default_code", "=", spec["default_code"])]],
+            {"fields": ["id"], "limit": 1},
+        )
+        if product:
+            product_id = int(product[0]["id"])
+        else:
+            product_id = int(tool_execute(
+                tool,
+                "product.template",
+                "create",
+                [{
+                    "name": spec["name"],
+                    "default_code": spec["default_code"],
+                    "list_price": round(spec["price_cents"] / 100, 2),
+                    "type": "service",
+                    "website_published": True,
+                }],
+            ))
+            created += 1
+        tier_product_ids[tier] = product_id
+
+    mapped = 0
+    for asset in assets:
+        tier = workflow_tier_from_price(int(asset["price_cents"]))
+        product_id = tier_product_ids[tier]
+        conn.execute(
+            """
+            INSERT INTO asset_product_map(slug, product_id, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(slug) DO UPDATE SET
+                product_id = excluded.product_id,
+                updated_at = excluded.updated_at
+            """,
+            (asset["slug"], product_id),
+        )
+        mapped += 1
+    conn.commit()
+    conn.close()
+    return {"checked": checked_products, "created": created, "mapped": mapped}
+
+
+def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
+    return ensure_workflow_tier_products(tool, db)
+
+
+def tool_execute(tool: Any, model: str, method: str, args: Optional[list] = None, kwargs: Optional[dict] = None) -> Any:
+    from marketplace_checkout import odoo_execute
+
+    return odoo_execute(tool, model, method, args, kwargs)
 
 
 def build_agent_assets() -> List[Dict[str, Any]]:
@@ -399,8 +524,18 @@ def populate(db_path: Optional[str] = None) -> Dict[str, int]:
 
 
 def main() -> None:
-    counts = populate(os.environ.get("WORKFLOW_DB_PATH"))
-    print(json.dumps({"ok": True, "counts": counts}, ensure_ascii=False, indent=2))
+    parser = argparse.ArgumentParser(description="Populate CA Marketplace assets")
+    parser.add_argument("--ensure-products", action="store_true", help="Create/update Odoo workflow products")
+    args = parser.parse_args()
+
+    db_path = os.environ.get("WORKFLOW_DB_PATH")
+    counts = populate(db_path)
+    result: Dict[str, Any] = {"ok": True, "counts": counts}
+    if args.ensure_products:
+        from marketplace_checkout import load_odoo_360_tool
+
+        result["products"] = ensure_workflow_products(load_odoo_360_tool(), WorkflowDatabase(db_path))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

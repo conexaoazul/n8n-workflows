@@ -23,7 +23,7 @@ from uuid import uuid4
 import uvicorn
 
 from workflow_db import WorkflowDatabase
-from marketplace_checkout import CheckoutRequest, checkout_asset
+from marketplace_checkout import CheckoutRequest, checkout_asset, validate_download_token
 
 try:
     import lead_store
@@ -810,12 +810,18 @@ async def get_asset_detail(slug: str):
     return {"asset": asset, "source": load_asset_source(asset)}
 
 
+def is_free_asset(asset: Dict[str, Any]) -> bool:
+    return int(asset.get("price_cents") or 0) == 0 and asset.get("model") == "free"
+
+
 @app.get("/api/assets/{slug}/download")
-async def download_asset(slug: str):
+async def download_asset(slug: str, token: Optional[str] = Query(None)):
     """Download the asset source as JSON or ZIP, depending on asset type."""
     asset = db.get_asset(slug)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    if not is_free_asset(asset) and not validate_download_token(token, slug):
+        raise HTTPException(status_code=403, detail="Download token required")
     file_path = zip_asset_path(asset)
     if asset.get("asset_type") == "workflow":
         return FileResponse(file_path, media_type="application/json", filename=file_path.name)
