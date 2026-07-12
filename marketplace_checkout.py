@@ -117,23 +117,36 @@ def create_partner(tool: Any, customer: CheckoutCustomer) -> int:
 
 
 def check_entitlement(tool: Any, partner_id: int, slug: str) -> Dict[str, Any]:
-    all_access_domain = [
+    subscription_domain = [
+        ("customer_id", "=", partner_id),
+        ("is_active", "=", True),
+        ("sale_order_id.order_line.product_id.default_code", "in", ["BLUE-APPS", "BLUE-AUTOMATE"]),
+    ]
+    active_subscription = odoo_execute(
+        tool,
+        "asaas.subscription",
+        "search_read",
+        [subscription_domain],
+        {"fields": ["id"], "limit": 1},
+    )
+    if active_subscription:
+        return {"entitled": True, "scope": "all", "via": "subscription"}
+
+    all_access_order_domain = [
         ("partner_id", "=", partner_id),
         ("state", "in", ["sale", "done"]),
         ("order_line.product_id.default_code", "in", ["BLUE-APPS", "BLUE-AUTOMATE"]),
-        "|",
         ("payment_state", "in", ["paid", "done"]),
-        ("asaas_subscription_id", "!=", False),
     ]
-    all_access = odoo_execute(
+    all_access_order = odoo_execute(
         tool,
         "sale.order",
         "search_read",
-        [all_access_domain],
+        [all_access_order_domain],
         {"fields": ["id"], "limit": 1},
     )
-    if all_access:
-        return {"entitled": True, "scope": "all"}
+    if all_access_order:
+        return {"entitled": True, "scope": "all", "via": "order"}
 
     single_domain = [
         ("partner_id", "=", partner_id),

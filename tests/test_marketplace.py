@@ -36,6 +36,13 @@ class FakeOdooTool:
             self.partners[args[0]["email"]] = partner_id
             return {"status": "success", "result": partner_id}
 
+        if model == "asaas.subscription" and method == "search_read":
+            domain = args[0]
+            partner_id = next((item[2] for item in domain if isinstance(item, tuple) and item[:2] == ("customer_id", "=")), None)
+            is_active = next((item[2] for item in domain if isinstance(item, tuple) and item[:2] == ("is_active", "=")), None)
+            active_subscription = self.entitlements.get(partner_id, {}).get("subscription")
+            return {"status": "success", "result": [{"id": 8001}] if is_active is True and active_subscription else []}
+
         if model == "sale.order" and method == "search_read":
             domain = args[0]
             partner_id = next((item[2] for item in domain if isinstance(item, tuple) and item[:2] == ("partner_id", "=")), None)
@@ -196,15 +203,51 @@ def test_checkout(tmp_path, monkeypatch):
     assert any(call["model"] == "sale.order.line" and call["args"][0]["product_id"] == 321 for call in tool.calls)
 
 
-def test_subscriber_all_access_returns_download_without_sale_order(tmp_path, monkeypatch):
+def test_active_subscription_all_access_returns_download_without_sale_order_lookup(tmp_path, monkeypatch):
+    db_path = create_checkout_db(tmp_path)
+    tool = FakeOdooTool(partners={"cliente@example.com": 99}, entitlements={99: {"subscription": True, "all": True}})
+    monkeypatch.setattr(marketplace_checkout, "load_odoo_360_tool", lambda: tool)
+
+    result = marketplace_checkout.checkout_asset("workflow-x", checkout_request(), str(db_path))
+
+    assert result == {
+        "entitled": True,
+        "scope": "all",
+        "via": "subscription",
+        "download_url": "/api/assets/workflow-x/download",
+    }
+    assert any(call["model"] == "asaas.subscription" and call["m"] == "search_read" for call in tool.calls)
+    assert not any(call["model"] == "sale.order" and call["m"] == "search_read" for call in tool.calls)
+    assert not any(call["model"] == "sale.order" and call["m"] == "create" for call in tool.calls)
+
+
+def test_paid_all_access_order_is_fallback_when_subscription_is_missing(tmp_path, monkeypatch):
     db_path = create_checkout_db(tmp_path)
     tool = FakeOdooTool(partners={"cliente@example.com": 99}, entitlements={99: {"all": True}})
     monkeypatch.setattr(marketplace_checkout, "load_odoo_360_tool", lambda: tool)
 
     result = marketplace_checkout.checkout_asset("workflow-x", checkout_request(), str(db_path))
 
-    assert result == {"entitled": True, "scope": "all", "download_url": "/api/assets/workflow-x/download"}
+    assert result == {
+        "entitled": True,
+        "scope": "all",
+        "via": "order",
+        "download_url": "/api/assets/workflow-x/download",
+    }
+    assert any(call["model"] == "asaas.subscription" and call["m"] == "search_read" for call in tool.calls)
+    assert any(call["model"] == "sale.order" and call["m"] == "search_read" for call in tool.calls)
     assert not any(call["model"] == "sale.order" and call["m"] == "create" for call in tool.calls)
+
+
+def test_inactive_subscription_without_paid_order_does_not_grant_all_access(tmp_path, monkeypatch):
+    db_path = create_checkout_db(tmp_path)
+    tool = FakeOdooTool(partners={"cliente@example.com": 99}, entitlements={99: {"subscription": False}})
+    monkeypatch.setattr(marketplace_checkout, "load_odoo_360_tool", lambda: tool)
+
+    result = marketplace_checkout.checkout_asset("workflow-x", checkout_request(), str(db_path))
+
+    assert result["entitled"] is False
+    assert result["order_id"] == 1234
 
 
 def test_previous_buyer_single_scope_only_for_matching_workflow(tmp_path, monkeypatch):
