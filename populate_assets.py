@@ -75,6 +75,11 @@ WORKFLOW_PRIORITY_TERMS = (
 )
 
 PRICING_TIERS = {"simple": 900, "medium": 1900, "advanced": 2700}
+WORKFLOW_TIER_PRODUCTS = {
+    "simple": {"default_code": "WF-SIMPLE", "name": "Workflow Simple", "price_cents": 900},
+    "medium": {"default_code": "WF-MEDIUM", "name": "Workflow Medium", "price_cents": 1900},
+    "advanced": {"default_code": "WF-ADVANCED", "name": "Workflow Advanced", "price_cents": 2700},
+}
 
 DEFAULT_COMPLEMENTS = {
     "ca-nfse-validator": ["blue-payment-asaas-nfse", "suporte-nfse"],
@@ -378,7 +383,14 @@ def build_workflow_assets(workflows_root: Optional[Path] = None, limit: int = 25
     return assets
 
 
-def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
+def workflow_tier_from_price(price_cents: int) -> str:
+    for tier, cents in PRICING_TIERS.items():
+        if int(price_cents) == cents:
+            return tier
+    raise ValueError(f"Unsupported workflow price tier: {price_cents}")
+
+
+def ensure_workflow_tier_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
     conn = sqlite3.connect(db.db_path)
     conn.row_factory = sqlite3.Row
     assets = conn.execute(
@@ -393,14 +405,15 @@ def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
     ).fetchall()
 
     created = 0
-    mapped = 0
-    for asset in assets:
-        default_code = f"WF-{asset['slug']}"
+    checked_products = 0
+    tier_product_ids: Dict[str, int] = {}
+    for tier, spec in WORKFLOW_TIER_PRODUCTS.items():
+        checked_products += 1
         product = tool_execute(
             tool,
             "product.template",
             "search_read",
-            [[("default_code", "=", default_code)]],
+            [[("default_code", "=", spec["default_code"])]],
             {"fields": ["id"], "limit": 1},
         )
         if product:
@@ -411,14 +424,20 @@ def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
                 "product.template",
                 "create",
                 [{
-                    "name": asset["name"],
-                    "default_code": default_code,
-                    "list_price": round(int(asset["price_cents"]) / 100, 2),
+                    "name": spec["name"],
+                    "default_code": spec["default_code"],
+                    "list_price": round(spec["price_cents"] / 100, 2),
                     "type": "service",
                     "website_published": True,
                 }],
             ))
             created += 1
+        tier_product_ids[tier] = product_id
+
+    mapped = 0
+    for asset in assets:
+        tier = workflow_tier_from_price(int(asset["price_cents"]))
+        product_id = tier_product_ids[tier]
         conn.execute(
             """
             INSERT INTO asset_product_map(slug, product_id, updated_at)
@@ -432,7 +451,11 @@ def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
         mapped += 1
     conn.commit()
     conn.close()
-    return {"checked": len(assets), "created": created, "mapped": mapped}
+    return {"checked": checked_products, "created": created, "mapped": mapped}
+
+
+def ensure_workflow_products(tool: Any, db: WorkflowDatabase) -> Dict[str, int]:
+    return ensure_workflow_tier_products(tool, db)
 
 
 def tool_execute(tool: Any, model: str, method: str, args: Optional[list] = None, kwargs: Optional[dict] = None) -> Any:
