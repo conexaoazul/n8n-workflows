@@ -417,9 +417,9 @@ def ensure_workflow_tier_products(tool: Any, db: WorkflowDatabase) -> Dict[str, 
             {"fields": ["id"], "limit": 1},
         )
         if product:
-            product_id = int(product[0]["id"])
+            template_id = int(product[0]["id"])
         else:
-            product_id = int(tool_execute(
+            template_id = int(tool_execute(
                 tool,
                 "product.template",
                 "create",
@@ -432,7 +432,18 @@ def ensure_workflow_tier_products(tool: Any, db: WorkflowDatabase) -> Dict[str, 
                 }],
             ))
             created += 1
-        tier_product_ids[tier] = product_id
+        # sale.order.line.product_id expects the VARIANT (product.product),
+        # not the template id — map the variant.
+        variant = tool_execute(
+            tool,
+            "product.product",
+            "search_read",
+            [[("product_tmpl_id", "=", template_id)]],
+            {"fields": ["id"], "limit": 1},
+        )
+        if not variant:
+            raise RuntimeError(f"No product.product variant for template {template_id}")
+        tier_product_ids[tier] = int(variant[0]["id"])
 
     mapped = 0
     for asset in assets:

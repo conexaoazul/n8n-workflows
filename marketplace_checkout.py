@@ -296,7 +296,7 @@ def validate_download_token(token: Optional[str], slug: str, scope: str = DOWNLO
 def create_sale_order(tool: Any, partner_id: int, product_id: int, asset: Dict[str, Any], plan: Optional[str]) -> int:
     product = odoo_execute(
         tool,
-        "product.template",
+        "product.product",
         "read",
         [[product_id]],
         {"fields": ["id", "list_price", "default_code"]},
