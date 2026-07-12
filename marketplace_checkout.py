@@ -220,7 +220,7 @@ def check_entitlement(tool: Any, partner_id: int, slug: str) -> Dict[str, Any]:
         ("partner_id", "=", partner_id),
         ("state", "in", ["sale", "done"]),
         ("order_line.product_id.default_code", "in", ["BLUE-APPS", "BLUE-AUTOMATE"]),
-        ("payment_state", "in", ["paid", "done"]),
+        ("invoice_ids.payment_state", "in", ["paid", "in_payment"]),
     ]
     all_access_order = odoo_execute(
         tool,
@@ -237,7 +237,7 @@ def check_entitlement(tool: Any, partner_id: int, slug: str) -> Dict[str, Any]:
     single_domain = [
         ("partner_id", "=", partner_id),
         ("state", "in", ["sale", "done"]),
-        ("payment_state", "in", ["paid", "done"]),
+        ("invoice_ids.payment_state", "in", ["paid", "in_payment"]),
         ("order_line.name", "ilike", f"[{slug}]"),
     ]
     single = odoo_execute(
