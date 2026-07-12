@@ -106,6 +106,53 @@ def find_existing_partner(tool: Any, customer: CheckoutCustomer) -> Optional[int
     return None
 
 
+def create_partner(tool: Any, customer: CheckoutCustomer) -> int:
+    vals = {
+        "name": customer.name,
+        "email": customer.email,
+    }
+    if customer.phone:
+        vals["phone"] = customer.phone
+    return int(odoo_execute(tool, "res.partner", "create", [vals]))
+
+
+def check_entitlement(tool: Any, partner_id: int, slug: str) -> Dict[str, Any]:
+    all_access_domain = [
+        ("partner_id", "=", partner_id),
+        ("state", "in", ["sale", "done"]),
+        ("order_line.product_id.default_code", "in", ["BLUE-APPS", "BLUE-AUTOMATE"]),
+        "|",
+        ("payment_state", "in", ["paid", "done"]),
+        ("asaas_subscription_id", "!=", False),
+    ]
+    all_access = odoo_execute(
+        tool,
+        "sale.order",
+        "search_read",
+        [all_access_domain],
+        {"fields": ["id"], "limit": 1},
+    )
+    if all_access:
+        return {"entitled": True, "scope": "all"}
+
+    single_domain = [
+        ("partner_id", "=", partner_id),
+        ("state", "in", ["sale", "done"]),
+        ("payment_state", "in", ["paid", "done"]),
+        ("order_line.product_id.default_code", "=", f"WF-{slug}"),
+    ]
+    single = odoo_execute(
+        tool,
+        "sale.order",
+        "search_read",
+        [single_domain],
+        {"fields": ["id"], "limit": 1},
+    )
+    if single:
+        return {"entitled": True, "scope": "single"}
+    return {"entitled": False}
+
+
 def create_sale_order(tool: Any, partner_id: int, product_id: int, asset: Dict[str, Any], plan: Optional[str]) -> int:
     order_vals = {
         "partner_id": partner_id,
@@ -138,23 +185,32 @@ def checkout_asset(slug: str, request: CheckoutRequest, db_path: Optional[str] =
     asset = db.get_asset(slug)
     if not asset:
         raise ValueError(f"Asset not found: {slug}")
-    product_id = get_product_id(db, slug)
-    if product_id is None:
-        raise ValueError(f"Missing Odoo product_id for asset slug: {slug}")
 
     tool = load_odoo_360_tool()
     partner_id = find_existing_partner(tool, request.customer)
     if partner_id is None:
-        raise ValueError("Existing Odoo customer not found; marketplace checkout does not create partners.")
+        partner_id = create_partner(tool, request.customer)
+
+    entitlement = check_entitlement(tool, partner_id, slug)
+    if entitlement.get("entitled"):
+        return {
+            **entitlement,
+            "download_url": f"/api/assets/{slug}/download",
+        }
+
+    product_id = get_product_id(db, slug)
+    if product_id is None:
+        raise ValueError(f"Missing Odoo product_id for asset slug: {slug}")
 
     order_id = create_sale_order(tool, partner_id, product_id, asset, request.plan)
     payment_url = build_payment_url(order_id)
     fulfillment_webhook = os.environ.get("FULFILLMENT_WEBHOOK_URL", DEFAULT_FULFILLMENT_WEBHOOK)
     return {
+        "entitled": False,
         "order_id": order_id,
         "payment_url": payment_url,
         "fulfillment_webhook": fulfillment_webhook,
     }
 
 
-__all__ = ["CheckoutCustomer", "CheckoutRequest", "checkout_asset"]
+__all__ = ["CheckoutCustomer", "CheckoutRequest", "check_entitlement", "checkout_asset"]
