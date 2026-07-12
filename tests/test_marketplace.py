@@ -72,7 +72,7 @@ class FakeOdooTool:
                 return {"status": "success", "result": [{"id": 9002}] if has_single else []}
             return {"status": "success", "result": []}
 
-        if model == "product.template" and method == "read":
+        if model == "product.product" and method == "read":
             product_id = args[0][0]
             product = self.products.get(product_id)
             return {"status": "success", "result": [product] if product else []}
@@ -566,6 +566,9 @@ def test_tier_products_created_once(tmp_path):
         def execute(payload):
             call = payload["payload"]
             calls.append(call)
+            if call["model"] == "product.product" and call["m"] == "search_read":
+                tmpl = call["args"][0][0][2]
+                return {"status": "success", "result": [{"id": int(tmpl) + 1000}]}
             if call["model"] == "product.template" and call["m"] == "search_read":
                 code = call["args"][0][0][2]
                 return {"status": "success", "result": [{"id": products[code]}] if code in products else []}
@@ -600,6 +603,9 @@ def test_no_per_workflow_product_created(tmp_path):
         @staticmethod
         def execute(payload):
             call = payload["payload"]
+            if call["model"] == "product.product" and call["m"] == "search_read":
+                tmpl = call["args"][0][0][2]
+                return {"status": "success", "result": [{"id": int(tmpl) + 1000}]}
             if call["model"] == "product.template" and call["m"] == "search_read":
                 return {"status": "success", "result": []}
             if call["model"] == "product.template" and call["m"] == "create":
